@@ -339,7 +339,9 @@ async def handle_balas_admin(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.answer()
 
     _, user_id, kode = query.data.split("_")
-    admin_name = update.effective_user.first_name
+
+    admin_user = update.effective_user
+    admin_name = f"@{admin_user.username}" if admin_user.username else admin_user.first_name
 
     if not sheet_main:
         await query.message.reply_text("⚠️ Database belum tersedia.")
@@ -362,7 +364,6 @@ async def handle_balas_admin(update: Update, context: ContextTypes.DEFAULT_TYPE)
             sheet_main.update_cell(i+1, 9, f"Locked by {admin_name}")
             break
 
-    # 🔥 simpan di chat_data (bukan user_data)
     context.chat_data["reply_target"] = int(user_id)
     context.chat_data["reply_kode"] = kode
 
@@ -379,9 +380,11 @@ async def admin_reply_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Database belum tersedia.")
         return
 
+    admin_user = update.effective_user
+    admin_name = f"@{admin_user.username}" if admin_user.username else admin_user.first_name
+
     uid = context.chat_data["reply_target"]
     kode = context.chat_data["reply_kode"]
-    admin_name = update.effective_user.first_name
     balasan = update.message.text
 
     # 1️⃣ Kirim ke client
@@ -404,7 +407,6 @@ async def admin_reply_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("✅ Balasan terkirim & status diperbarui.")
 
-    # 🔥 bersihkan session grup
     context.chat_data.pop("reply_target", None)
     context.chat_data.pop("reply_kode", None)
 
