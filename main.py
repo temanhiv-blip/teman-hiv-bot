@@ -5,8 +5,6 @@ import time
 import json
 import tempfile
 from datetime import datetime, timedelta, timezone
-from flask import Flask
-import threading
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import (
@@ -19,16 +17,6 @@ from telegram.ext import (
 )
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-
-# --- Flask Health Check (Agar Render 24 Jam) ---
-flask_app = Flask(__name__)
-@flask_app.route("/")
-def home():
-    return "✅ Bot TemanHIV is Running", 200
-
-def run_flask():
-    port = int(os.environ.get("PORT", 10000))
-    flask_app.run(host="0.0.0.0", port=port)
 
 # --- Logging ---
 logging.basicConfig(level=logging.INFO)
@@ -136,18 +124,15 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         kode = f"K{int(datetime.now().timestamp())}"
         alias, usia, alamat = context.user_data.get('alias'), context.user_data.get('usia'), context.user_data.get('alamat')
         
-        # Kirim ke Admin Group
         text_admin = f"📨 *Tatakunan Baru*\n👤 {alias} ({usia} thn)\n📍 {alamat}\n🆔 Kode: `{kode}`\n\n{text}"
         btn = [[InlineKeyboardButton("💬 Balas", callback_data=f"balas_{update.effective_user.id}_{kode}")]]
         await context.bot.send_message(chat_id=ADMIN_GROUP_ID, text=text_admin, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(btn))
         
-        # Simpan Ke Sheet Konsultasi
         if sheet_main:
             sheet_main.append_row([waktu, alias, usia, text, "", kode, "", alamat])
             
         await update.message.reply_text(f"✅ Terkirim. Kode pian: {kode}")
         context.user_data["mode"] = None
-        # Tampilkan menu utama kembali
         await update.message.reply_text("Pilih menu lainnya:", reply_markup=menu_utama_keyboard())
 
 # --- Callback & Tombol ---
@@ -194,7 +179,6 @@ async def tombol_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             skor = context.user_data["skor"]
             hasil = "❗ Tinggi (Segera Tes)" if skor >= 3 else "✅ Rendah"
-            # Simpan ke Sheet Risiko
             try:
                 wita = timezone(timedelta(hours=8))
                 now = datetime.now(wita).strftime("%Y-%m-%d %H:%M:%S")
@@ -226,7 +210,6 @@ async def admin_reply_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- Main Run ---
 if __name__ == "__main__":
-    threading.Thread(target=run_flask, daemon=True).start()
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     
     app.add_handler(CommandHandler("start", start))
