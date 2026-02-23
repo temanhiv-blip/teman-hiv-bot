@@ -341,6 +341,10 @@ async def handle_balas_admin(update: Update, context: ContextTypes.DEFAULT_TYPE)
     _, user_id, kode = query.data.split("_")
     admin_name = update.effective_user.first_name
 
+    if not sheet_main:
+        await query.message.reply_text("⚠️ Database belum tersedia.")
+        return
+
     rows = sheet_main.get_all_values()
 
     for i, row in enumerate(rows):
@@ -358,8 +362,9 @@ async def handle_balas_admin(update: Update, context: ContextTypes.DEFAULT_TYPE)
             sheet_main.update_cell(i+1, 9, f"Locked by {admin_name}")
             break
 
-    context.user_data["reply_target"] = int(user_id)
-    context.user_data["reply_kode"] = kode
+    # 🔥 simpan di chat_data (bukan user_data)
+    context.chat_data["reply_target"] = int(user_id)
+    context.chat_data["reply_kode"] = kode
 
     await query.message.reply_text(
         f"🔒 Tiket dikunci oleh {admin_name}\nSilakan ketik balasan untuk kode {kode}:"
@@ -367,20 +372,26 @@ async def handle_balas_admin(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def admin_reply_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    if "reply_target" not in context.user_data:
+    if "reply_target" not in context.chat_data:
         return
 
-    uid = context.user_data["reply_target"]
-    kode = context.user_data["reply_kode"]
+    if not sheet_main:
+        await update.message.reply_text("⚠️ Database belum tersedia.")
+        return
+
+    uid = context.chat_data["reply_target"]
+    kode = context.chat_data["reply_kode"]
     admin_name = update.effective_user.first_name
     balasan = update.message.text
 
+    # 1️⃣ Kirim ke client
     await context.bot.send_message(
         chat_id=uid,
         text=f"📬 *Balasan Admin*\n🆔 `{kode}`\n\n{balasan}",
         parse_mode=ParseMode.MARKDOWN
     )
 
+    # 2️⃣ Update sheet
     rows = sheet_main.get_all_values()
 
     for i, row in enumerate(rows):
@@ -393,8 +404,9 @@ async def admin_reply_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("✅ Balasan terkirim & status diperbarui.")
 
-    context.user_data.pop("reply_target", None)
-    context.user_data.pop("reply_kode", None)
+    # 🔥 bersihkan session grup
+    context.chat_data.pop("reply_target", None)
+    context.chat_data.pop("reply_kode", None)
 
 # =========================
 # LIST PENDING (ADMIN ONLY)
