@@ -29,6 +29,9 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_GROUP_ID = int(os.getenv("ADMIN_GROUP_ID"))
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
 
+def is_admin_group(update: Update):
+    return update.effective_chat and update.effective_chat.id == ADMIN_GROUP_ID
+    
 # =========================
 # GOOGLE SHEETS
 # =========================
@@ -211,7 +214,7 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                 waktu, alias, usia, text, "", kode, "", alamat, "Pending", update.effective_user.id
             ])
 
-        await update.message.reply_text(f"✅ Terkirim. Kode pian: {kode}")
+        await update.message.reply_text(f"✅ Terkirim. Kode tiket pian: {kode}")
         context.user_data["mode"] = None
         await update.message.reply_text("Pilih menu lainnya:", reply_markup=menu_utama_keyboard())
 
@@ -230,7 +233,12 @@ async def tombol_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Kembali", callback_data="kembali_menu")]])
         )
-
+        
+    elif data.startswith("plist_"):
+        page = int(data.split("_")[1])
+        context.args = [str(page)]
+        await list_pending(update, context)
+        
     elif data == "kembali_menu":
         await query.edit_message_text(
             "🌟 *Menu Utama*\nSilakan pilih layanan:",
@@ -242,7 +250,13 @@ async def tombol_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["alamat"] = data.replace("alamat_", "")
         context.user_data["mode"] = "input_usia"
         await query.edit_message_text("Berapa usia pian saat ini?")
-
+        
+    elif data == "kirim_tatakunan":
+        context.user_data["mode"] = "kirim_tatakunan"
+        await query.message.reply_text(
+            "Silakan ketik pertanyaan pian untuk admin:"
+        )
+    
     elif data == "chat_admin":
         alias = context.user_data.get("alias")
         usia = context.user_data.get("usia")
@@ -289,11 +303,32 @@ async def tombol_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             skor = context.user_data["skor"]
-            hasil = "❗ Tinggi (Segera Tes & Konsultasi Admin)" if skor >= 3 else "✅ Rendah"
+            hasil = "❗Pian Risiko Tinggi (Segera Tes & Konsultasi Admin)" if skor >= 3 else "✅ Resiko Pian Rendah, Tetap Pertahankan"
+        
+            # ✅ SIMPAN KE SHEET RISIKO
+            try:
+                wita = timezone(timedelta(hours=8))
+                now = datetime.now(wita).strftime("%Y-%m-%d %H:%M:%S")
+        
+                rs_sheet = client.open_by_key(SPREADSHEET_ID).worksheet("Risiko")
+        
+                rs_sheet.append_row([
+                    now,
+                    context.user_data.get("alias"),
+                    context.user_data.get("usia"),
+                    skor,
+                    hasil,
+                    context.user_data.get("alamat")
+                ])
+            except Exception as e:
+                logger.error(f"Gagal simpan risiko: {e}")
+        
             await query.edit_message_text(
                 f"Hasil Cek Risiko: *{hasil}* (Skor: {skor})",
                 parse_mode=ParseMode.MARKDOWN,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Kembali", callback_data="kembali_menu")]])
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("⬅️ Kembali", callback_data="kembali_menu")]]
+                )
             )
 
 # =========================
@@ -362,12 +397,134 @@ async def admin_reply_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("reply_kode", None)
 
 # =========================
+# LIST PENDING (ADMIN ONLY)
+# =========================
+async def list_pending(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    # 🔒 Hanya bisa di grup admin
+    if not is_admin_group(update):
+        return
+
+    # Tentukan target reply (agar aman dari command & callback)
+    target = None
+    if update.message:
+        target = update.message
+    elif update.callback_query:
+        target = update.callback_query.message
+    else:
+        return
+
+    # Cek koneksi sheet
+    if not sheet_main:
+        await target.reply_text("⚠️ Database belum tersedia.")
+        return
+
+    # Ambil nomor halaman
+    page = 1
+    if context.args:
+        try:
+            page = int(context.args[0])
+        except:
+            page = 1
+
+    rows = sheet_main.get_all_values()
+
+    if len(rows) <= 1:
+        await target.reply_text("📭 Belum ada data tiket.")
+        return
+
+    # 🔎 Filter hanya status Pending (TERBARU DI ATAS)
+    pending_rows = []
+    for row in reversed(rows[1:]):  # skip header + urutkan terbaru dulu
+        if len(row) > 8 and row[8] == "Pending":
+            pending_rows.append(row)
+
+    if not pending_rows:
+        await target.reply_text("✅ Tidak ada tiket Pending.")
+        return
+
+    per_page = 10
+    total_pages = (len(pending_rows) + per_page - 1) // per_page
+
+    if page < 1:
+        page = 1
+    if page > total_pages:
+        page = total_pages
+
+    start = (page - 1) * per_page
+    end = start + per_page
+    data = pending_rows[start:end]
+
+    # Header halaman
+    await target.reply_text(
+        f"📋 *Daftar Tiket Pending*\nHalaman {page}/{total_pages}",
+        parse_mode=ParseMode.MARKDOWN
+    )
+
+    # Tampilkan tiket
+    for row in data:
+
+        kode = row[5] if len(row) > 5 else "-"
+        nama = row[1] if len(row) > 1 else "-"
+        usia = row[2] if len(row) > 2 else "-"
+        alamat = row[7] if len(row) > 7 else "-"
+        pertanyaan = row[3] if len(row) > 3 else "-"
+        user_id = row[9] if len(row) > 9 else None
+
+        teks = (
+            f"🆔 *{kode}*\n"
+            f"👤 {nama} ({usia} thn)\n"
+            f"📍 {alamat}\n"
+            f"❓ {pertanyaan}"
+        )
+
+        # tombol balas hanya jika user_id ada
+        if user_id:
+            btn = [[
+                InlineKeyboardButton(
+                    "💬 Balas",
+                    callback_data=f"balas_{user_id}_{kode}"
+                )
+            ]]
+            await target.reply_text(
+                teks,
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=InlineKeyboardMarkup(btn)
+            )
+        else:
+            await target.reply_text(
+                teks,
+                parse_mode=ParseMode.MARKDOWN
+            )
+
+    # =========================
+    # NAVIGASI PAGINATION
+    # =========================
+    nav_buttons = []
+
+    if page > 1:
+        nav_buttons.append(
+            InlineKeyboardButton("⬅ Prev", callback_data=f"plist_{page-1}")
+        )
+
+    if page < total_pages:
+        nav_buttons.append(
+            InlineKeyboardButton("Next ➡", callback_data=f"plist_{page+1}")
+        )
+
+    if nav_buttons:
+        await target.reply_text(
+            "Navigasi:",
+            reply_markup=InlineKeyboardMarkup([nav_buttons])
+        )
+# =========================
 # RUN
 # =========================
 if __name__ == "__main__":
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("list", list_pending))
     app.add_handler(CallbackQueryHandler(handle_balas_admin, pattern="^balas_"))
     app.add_handler(CallbackQueryHandler(tombol_handler))
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE, handle_user_message))
