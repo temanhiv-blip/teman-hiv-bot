@@ -1,0 +1,21 @@
+# Render.com Deployment Configuration for Telegram Bot
+
+service:
+  name: telegram-bot
+  type: web
+  environment: python
+  builds:
+    - type: python
+      version: "3.8"
+
+  env:
+    TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+
+  plan: free
+
+  regions:
+    - type: aws
+      region: us-west-2
+
+  static_sites:
+    - path: public
