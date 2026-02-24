@@ -360,7 +360,7 @@ async def handle_balas_admin(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     # Cari tiket berdasarkan kode
     try:
-        cell = sheet_main.find(kode)
+        cell = sheet_main.find(kode, in_column=6)
         row_number = cell.row
         row = sheet_main.row_values(row_number)
     except:
