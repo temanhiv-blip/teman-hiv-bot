@@ -333,7 +333,7 @@ async def tombol_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
 # =========================
-# LOCK TIKET (PRODUCTION SAFE)
+# LOCK TIKET (FINAL FIX)
 # =========================
 async def handle_balas_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -343,71 +343,53 @@ async def handle_balas_admin(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not is_admin_group(update):
         return
 
-    if not sheet_main:
-        await query.message.reply_text("⚠️ Database belum tersedia.")
-        return
-
-    # Ambil data dari tombol
     try:
         _, user_id, kode = query.data.split("_")
     except:
-        await query.message.reply_text("❌ Format tiket tidak valid.")
+        await query.message.reply_text("❌ Format tiket salah.")
         return
 
     admin_user = update.effective_user
     admin_id = str(admin_user.id).strip()
     admin_display = f"@{admin_user.username}" if admin_user.username else admin_user.first_name
 
-    # Cari tiket berdasarkan kode
     try:
-        cell = sheet_main.find(kode, in_column=6)
+        cell = sheet_main.find(kode, in_column=6)  # kolom F = Kode
         row_number = cell.row
         row = sheet_main.row_values(row_number)
     except:
         await query.message.reply_text("❌ Tiket tidak ditemukan.")
         return
 
-    # Ambil kolom sesuai header
-    status = str(row[8]).strip() if len(row) > 8 else ""
-    locked_by = str(row[9]).strip() if len(row) > 9 else ""
+    status = str(row[8]).strip()
+    locked_by = str(row[9]).strip()
 
-    # Jika sudah selesai
     if status == "Replied":
         await query.message.reply_text("❌ Tiket sudah dibalas.")
         return
 
-    # Jika sudah dikunci admin lain
     if status == "Locked" and locked_by and locked_by != admin_id:
         await query.message.reply_text("🔒 Tiket sedang ditangani admin lain.")
         return
 
-    # Lock tiket
-    try:
-        sheet_main.update(
-            f"I{row_number}:J{row_number}",
-            [["Locked", admin_id]]
-        )
-    except Exception as e:
-        await query.message.reply_text(f"❌ Gagal lock tiket: {e}")
-        return
+    # LOCK
+    sheet_main.update(
+        f"I{row_number}:J{row_number}",
+        [["Locked", admin_id]]
+    )
 
     await query.message.reply_text(
         f"🔒 Tiket dikunci oleh {admin_display}\n"
         f"Reply pesan ini untuk membalas kode {kode}."
     )
 # =========================
-# PROSES BALAS ADMIN (PRODUCTION SAFE)
+# PROSES BALAS ADMIN (FINAL FIX)
 # =========================
 async def admin_reply_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not is_admin_group(update):
         return
 
-    if not sheet_main:
-        await update.message.reply_text("⚠️ Database belum tersedia.")
-        return
-
-    # WAJIB reply ke pesan bot
     if not update.message.reply_to_message:
         return
 
@@ -417,9 +399,9 @@ async def admin_reply_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     import re
-    match = re.search(r'kode\s+([A-Za-z0-9]+)', reply_text, re.IGNORECASE)
+    match = re.search(r'kode\s+([A-Za-z0-9]+)', reply_text)
     if not match:
-        await update.message.reply_text("❌ Kode tiket tidak ditemukan.")
+        await update.message.reply_text("❌ Kode tidak ditemukan.")
         return
 
     kode = match.group(1)
@@ -429,7 +411,6 @@ async def admin_reply_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     admin_display = f"@{admin_user.username}" if admin_user.username else admin_user.first_name
     balasan = update.message.text
 
-    # Cari tiket
     try:
         cell = sheet_main.find(kode, in_column=6)
         row_number = cell.row
@@ -438,27 +419,22 @@ async def admin_reply_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Tiket tidak ditemukan.")
         return
 
-    status = str(row[8]).strip() if len(row) > 8 else ""
-    locked_by = str(row[9]).strip() if len(row) > 9 else ""
-    user_id = str(row[10]).strip() if len(row) > 10 else ""
+    status = str(row[8]).strip()
+    locked_by = str(row[9]).strip()
+    user_id = str(row[10]).strip()
 
-    # Validasi status
     if status != "Locked":
         await update.message.reply_text("❌ Tiket belum dikunci.")
         return
 
-    # Validasi pemilik lock
-    if locked_by != admin_id:
-        await update.message.reply_text("❌ Tiket ini bukan dikunci oleh Anda.")
+    # 🔥 BUG FIX UTAMA
+    if str(locked_by).strip() != str(admin_id).strip():
+        await update.message.reply_text(
+            f"❌ Tiket ini dikunci oleh ID {locked_by}, bukan {admin_id}"
+        )
         return
 
-    if not user_id:
-        await update.message.reply_text("❌ User ID tidak ditemukan.")
-        return
-
-    # =========================
-    # Kirim ke Client
-    # =========================
+    # Kirim ke client
     try:
         await context.bot.send_message(
             chat_id=int(user_id),
@@ -466,70 +442,47 @@ async def admin_reply_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.MARKDOWN
         )
     except Exception as e:
-        await update.message.reply_text(f"❌ Gagal kirim ke client: {e}")
+        await update.message.reply_text(f"❌ Gagal kirim: {e}")
         return
 
-    # =========================
-    # Update Sheet
-    # =========================
-    try:
-        sheet_main.update(
-            f"E{row_number}:K{row_number}",
-            [[
-                balasan,          # E Balasan
-                kode,             # F Kode
-                admin_display,    # G Admin
-                row[7],           # H Alamat
-                "Replied",        # I Status
-                "",               # J Locked_by dikosongkan
-                user_id           # K User_ID tetap
-            ]]
-        )
-    except Exception as e:
-        await update.message.reply_text(f"⚠️ Balasan terkirim tapi gagal update sheet: {e}")
-        return
+    # Update sheet → Replied
+    sheet_main.update(
+        f"E{row_number}:K{row_number}",
+        [[
+            balasan,          # E
+            kode,             # F
+            admin_display,    # G
+            row[7],           # H
+            "Replied",        # I
+            "",               # J kosongkan lock
+            user_id           # K
+        ]]
+    )
 
     await update.message.reply_text("✅ Balasan terkirim & status diperbarui.")
 # =========================
-# LIST PENDING (ADMIN ONLY)
+# LIST PENDING (FIX FINAL)
 # =========================
 async def list_pending(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    # 🔒 Hanya bisa di grup admin
     if not is_admin_group(update):
         return
 
-    # Tentukan target reply (agar aman dari command & callback)
-    target = None
-    if update.message:
-        target = update.message
-    elif update.callback_query:
-        target = update.callback_query.message
-    else:
-        return
+    target = update.message if update.message else update.callback_query.message
 
-    # Cek koneksi sheet
     if not sheet_main:
         await target.reply_text("⚠️ Database belum tersedia.")
         return
 
-    # Ambil nomor halaman
-    page = 1
-    if context.args:
-        try:
-            page = int(context.args[0])
-        except:
-            page = 1
-
     rows = sheet_main.get_all_values()
 
     if len(rows) <= 1:
-        await target.reply_text("📭 Belum ada data tiket.")
+        await target.reply_text("📭 Belum ada data.")
         return
 
-    # 🔎 Filter hanya status Pending (TERBARU DI ATAS)
     pending_rows = []
-    for row in reversed(rows[1:]):  # skip header + urutkan terbaru dulu
+
+    for row in reversed(rows[1:]):  # skip header
         if len(row) > 8 and str(row[8]).strip() == "Pending":
             pending_rows.append(row)
 
@@ -537,33 +490,16 @@ async def list_pending(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await target.reply_text("✅ Tidak ada tiket Pending.")
         return
 
-    per_page = 10
-    total_pages = (len(pending_rows) + per_page - 1) // per_page
+    await target.reply_text("📋 *Daftar Tiket Pending*", parse_mode=ParseMode.MARKDOWN)
 
-    if page < 1:
-        page = 1
-    if page > total_pages:
-        page = total_pages
+    for row in pending_rows:
 
-    start = (page - 1) * per_page
-    end = start + per_page
-    data = pending_rows[start:end]
-
-    # Header halaman
-    await target.reply_text(
-        f"📋 *Daftar Tiket Pending*\nHalaman {page}/{total_pages}",
-        parse_mode=ParseMode.MARKDOWN
-    )
-
-    # Tampilkan tiket
-    for row in data:
-
-        kode = row[5] if len(row) > 5 else "-"
-        nama = row[1] if len(row) > 1 else "-"
-        usia = row[2] if len(row) > 2 else "-"
-        alamat = row[7] if len(row) > 7 else "-"
-        pertanyaan = row[3] if len(row) > 3 else "-"
-        user_id = row[10] if len(row) > 10 else None
+        kode = row[5]
+        nama = row[1]
+        usia = row[2]
+        alamat = row[7]
+        pertanyaan = row[3]
+        user_id = row[10] if len(row) > 10 else ""
 
         teks = (
             f"🆔 *{kode}*\n"
@@ -572,7 +508,6 @@ async def list_pending(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"❓ {pertanyaan}"
         )
 
-        # tombol balas hanya jika user_id ada
         if user_id:
             btn = [[
                 InlineKeyboardButton(
@@ -580,37 +515,15 @@ async def list_pending(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     callback_data=f"balas_{user_id}_{kode}"
                 )
             ]]
+
             await target.reply_text(
                 teks,
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=InlineKeyboardMarkup(btn)
             )
         else:
-            await target.reply_text(
-                teks,
-                parse_mode=ParseMode.MARKDOWN
-            )
+            await target.reply_text(teks, parse_mode=ParseMode.MARKDOWN)
 
-    # =========================
-    # NAVIGASI PAGINATION
-    # =========================
-    nav_buttons = []
-
-    if page > 1:
-        nav_buttons.append(
-            InlineKeyboardButton("⬅ Prev", callback_data=f"plist_{page-1}")
-        )
-
-    if page < total_pages:
-        nav_buttons.append(
-            InlineKeyboardButton("Next ➡", callback_data=f"plist_{page+1}")
-        )
-
-    if nav_buttons:
-        await target.reply_text(
-            "Navigasi:",
-            reply_markup=InlineKeyboardMarkup([nav_buttons])
-        )
 # =========================
 # RUN (AUTO WEBHOOK / POLLING)
 # =========================
