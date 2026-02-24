@@ -333,20 +333,29 @@ async def tombol_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
 # =========================
-# LOCK + BALAS ADMIN
+# LOCK + BALAS ADMIN (FINAL STABLE)
 # =========================
+import re
+
 async def handle_balas_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    _, user_id, kode = query.data.split("_")
-
-    admin_user = update.effective_user
-    admin_name = f"@{admin_user.username}" if admin_user.username else admin_user.first_name
+    if not is_admin_group(update):
+        return
 
     if not sheet_main:
         await query.message.reply_text("⚠️ Database belum tersedia.")
         return
+
+    try:
+        _, user_id, kode = query.data.split("_")
+    except:
+        await query.message.reply_text("❌ Format tiket tidak valid.")
+        return
+
+    admin_user = update.effective_user
+    admin_name = f"@{admin_user.username}" if admin_user.username else admin_user.first_name
 
     try:
         cell = sheet_main.find(kode)
@@ -357,74 +366,116 @@ async def handle_balas_admin(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     status = row[8] if len(row) > 8 else ""
 
+    # ❌ Sudah dibalas
     if status == "Replied":
         await query.message.reply_text("❌ Tiket sudah dibalas.")
         return
 
+    # ❌ Sudah dikunci admin lain
     if status.startswith("Locked") and admin_name not in status:
         await query.message.reply_text("🔒 Tiket sedang ditangani admin lain.")
         return
 
-    # Lock tiket
+    # 🔒 Lock tiket
     sheet_main.update_cell(cell.row, 9, f"Locked by {admin_name}")
 
-    # Simpan per ADMIN (bukan per grup)
-    context.user_data["reply_target"] = int(user_id)
-    context.user_data["reply_kode"] = kode
-
-    msg = await query.message.reply_text(
-        f"🔒 Tiket dikunci oleh {admin_name}\nReply pesan ini untuk membalas kode {kode}:"
+    # Kirim instruksi reply
+    await query.message.reply_text(
+        f"🔒 Tiket dikunci oleh {admin_name}\n"
+        f"Reply pesan ini untuk membalas kode {kode}."
     )
 
-    context.user_data["reply_message_id"] = msg.message_id
 
+# =========================
+# PROSES BALASAN ADMIN
+# =========================
 async def admin_reply_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    if "reply_target" not in context.user_data:
+    # 🔒 Hanya di grup admin
+    if not is_admin_group(update):
         return
 
-    # WAJIB reply ke pesan bot
+    # ❗ Harus reply ke pesan bot
     if not update.message.reply_to_message:
         return
 
-    if update.message.reply_to_message.message_id != context.user_data.get("reply_message_id"):
+    reply_text = update.message.reply_to_message.text or ""
+
+    # ❗ Pastikan ini pesan lock tiket
+    if "membalas kode" not in reply_text.lower():
         return
 
     if not sheet_main:
         await update.message.reply_text("⚠️ Database belum tersedia.")
         return
 
+    # 🔍 Ambil kode dari pesan lock
+    match = re.search(r'kode\s+([A-Za-z0-9]+)', reply_text, re.IGNORECASE)
+    if not match:
+        await update.message.reply_text("❌ Kode tiket tidak ditemukan.")
+        return
+
+    kode = match.group(1)
+
     admin_user = update.effective_user
     admin_name = f"@{admin_user.username}" if admin_user.username else admin_user.first_name
-
-    uid = context.user_data["reply_target"]
-    kode = context.user_data["reply_kode"]
     balasan = update.message.text
 
-    # Kirim ke client
-    await context.bot.send_message(
-        chat_id=uid,
-        text=f"📬 *Balasan Admin*\n🆔 `{kode}`\n\n{balasan}",
-        parse_mode=ParseMode.MARKDOWN
-    )
-
-    # Update sheet via find (lebih aman)
     try:
         cell = sheet_main.find(kode)
         row = sheet_main.row_values(cell.row)
+    except:
+        await update.message.reply_text("❌ Tiket tidak ditemukan.")
+        return
 
+    status = row[8] if len(row) > 8 else ""
+
+    # ❌ Sudah dibalas
+    if status == "Replied":
+        await update.message.reply_text("❌ Tiket sudah dibalas.")
+        return
+
+    # ❌ Tidak dalam kondisi locked
+    if not status.startswith("Locked"):
+        await update.message.reply_text("❌ Tiket tidak dalam kondisi Locked.")
+        return
+
+    # ❌ Bukan yang mengunci
+    if admin_name not in status:
+        await update.message.reply_text("❌ Tiket ini bukan dikunci oleh Anda.")
+        return
+
+    user_id = row[9] if len(row) > 9 else None
+    if not user_id:
+        await update.message.reply_text("❌ User ID tidak ditemukan.")
+        return
+
+    # =========================
+    # KIRIM KE CLIENT
+    # =========================
+    try:
+        await context.bot.send_message(
+            chat_id=int(user_id),
+            text=f"📬 *Balasan Admin*\n🆔 `{kode}`\n\n{balasan}",
+            parse_mode=ParseMode.MARKDOWN
+        )
+    except Exception as e:
+        await update.message.reply_text(f"❌ Gagal kirim ke client: {e}")
+        return
+
+    # =========================
+    # UPDATE SHEET
+    # =========================
+    try:
         sheet_main.update(
             f"E{cell.row}:I{cell.row}",
             [[balasan, kode, admin_name, row[7], "Replied"]]
         )
-    except:
-        pass
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Balasan terkirim tapi gagal update sheet: {e}")
+        return
 
     await update.message.reply_text("✅ Balasan terkirim & status diperbarui.")
-
-    # Bersihkan session admin ini saja
-    context.user_data.clear()
-
 # =========================
 # LIST PENDING (ADMIN ONLY)
 # =========================
