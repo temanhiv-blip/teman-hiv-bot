@@ -547,11 +547,13 @@ async def list_pending(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup([nav_buttons])
         )
 # =========================
-# RUN
+# RUN (AUTO WEBHOOK / POLLING)
 # =========================
 if __name__ == "__main__":
+
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
+    # ===== Handlers =====
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("list", list_pending))
     app.add_handler(CallbackQueryHandler(handle_balas_admin, pattern="^balas_"))
@@ -559,34 +561,21 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE, handle_user_message))
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS, admin_reply_text))
 
-    logger.info("🤖 Bot Started...")
-# =========================
-# WEBHOOK RUN (RAILWAY)
-# =========================
-if __name__ == "__main__":
-
+    # =========================
+    # MODE DETECTION
+    # =========================
+    PUBLIC_DOMAIN = os.getenv("RAILWAY_PUBLIC_DOMAIN")
     PORT = int(os.getenv("PORT", 8000))
-    RAILWAY_URL = os.getenv("RAILWAY_STATIC_URL")
 
-    if not RAILWAY_URL:
-        raise ValueError("RAILWAY_STATIC_URL tidak ditemukan di environment")
+    if PUBLIC_DOMAIN:
+        WEBHOOK_URL = f"https://{PUBLIC_DOMAIN}"
+        logger.info(f"🚀 Running in WEBHOOK mode: {WEBHOOK_URL}")
 
-    WEBHOOK_URL = f"https://{RAILWAY_URL}"
-
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-
-    # Handlers tetap sama
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("list", list_pending))
-    app.add_handler(CallbackQueryHandler(handle_balas_admin, pattern="^balas_"))
-    app.add_handler(CallbackQueryHandler(tombol_handler))
-    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE, handle_user_message))
-    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS, admin_reply_text))
-
-    logger.info("🚀 Starting Webhook Bot...")
-
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        webhook_url=WEBHOOK_URL,
-    )
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            webhook_url=WEBHOOK_URL,
+        )
+    else:
+        logger.info("⚠️ Running in POLLING mode (no domain detected)")
+        app.run_polling(drop_pending_updates=True)
