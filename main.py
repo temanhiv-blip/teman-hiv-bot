@@ -2,6 +2,7 @@ import logging
 import os
 import json
 import tempfile
+import asyncio
 from datetime import datetime, timedelta, timezone
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
@@ -559,4 +560,33 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS, admin_reply_text))
 
     logger.info("🤖 Bot Started...")
-    app.run_polling(drop_pending_updates=True)
+# =========================
+# WEBHOOK RUN (RAILWAY)
+# =========================
+if __name__ == "__main__":
+
+    PORT = int(os.getenv("PORT", 8000))
+    RAILWAY_URL = os.getenv("RAILWAY_STATIC_URL")
+
+    if not RAILWAY_URL:
+        raise ValueError("RAILWAY_STATIC_URL tidak ditemukan di environment")
+
+    WEBHOOK_URL = f"https://{RAILWAY_URL}"
+
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    # Handlers tetap sama
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("list", list_pending))
+    app.add_handler(CallbackQueryHandler(handle_balas_admin, pattern="^balas_"))
+    app.add_handler(CallbackQueryHandler(tombol_handler))
+    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE, handle_user_message))
+    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS, admin_reply_text))
+
+    logger.info("🚀 Starting Webhook Bot...")
+
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        webhook_url=WEBHOOK_URL,
+    )
