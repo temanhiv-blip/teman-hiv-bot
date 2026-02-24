@@ -212,7 +212,17 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         if sheet_main:
             sheet_main.append_row([
-                waktu, alias, usia, text, "", kode, "", alamat, "Pending", update.effective_user.id
+                waktu,                 # A
+                alias,                 # B
+                usia,                  # C
+                text,                  # D
+                "",                    # E Balasan
+                kode,                  # F
+                "",                    # G Admin
+                alamat,                # H
+                "Pending",             # I Status
+                "",                    # J Locked_by (HARUS KOSONG)
+                update.effective_user.id  # K User_ID
             ])
 
         await update.message.reply_text(f"✅ Terkirim. Kode tiket pian: {kode}")
@@ -361,8 +371,8 @@ async def handle_balas_admin(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.message.reply_text("❌ Tiket tidak ditemukan.")
         return
 
-    status = str(row[8]).strip()
-    locked_by = str(row[9]).strip()
+    status = str(row[8]).strip() if len(row) > 8 else ""
+    locked_by = str(row[9]).strip() if len(row) > 9 else ""
 
     if status == "Replied":
         await query.message.reply_text("❌ Tiket sudah dibalas.")
@@ -374,8 +384,8 @@ async def handle_balas_admin(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     # LOCK
     sheet_main.update(
-        f"I{row_number}:J{row_number}",
-        [["Locked", admin_id]]
+        range_name=f"I{row_number}:J{row_number}",
+        values=[["Locked", admin_id]]
     )
 
     await query.message.reply_text(
@@ -419,9 +429,9 @@ async def admin_reply_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Tiket tidak ditemukan.")
         return
 
-    status = str(row[8]).strip()
-    locked_by = str(row[9]).strip()
-    user_id = str(row[10]).strip()
+    status = str(row[8]).strip() if len(row) > 8 else ""
+    locked_by = str(row[9]).strip() if len(row) > 9 else ""
+    user_id = str(row[10]).strip() if len(row) > 10 else ""
 
     if status != "Locked":
         await update.message.reply_text("❌ Tiket belum dikunci.")
@@ -447,18 +457,17 @@ async def admin_reply_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Update sheet → Replied
     sheet_main.update(
-        f"E{row_number}:K{row_number}",
-        [[
-            balasan,          # E
-            kode,             # F
-            admin_display,    # G
-            row[7],           # H
-            "Replied",        # I
-            "",               # J kosongkan lock
-            user_id           # K
+        range_name=f"E{row_number}:K{row_number}",
+        values=[[
+            balasan,
+            kode,
+            admin_display,
+            row[7] if len(row) > 7 else "",
+            "Replied",
+            "",
+            user_id
         ]]
     )
-
     await update.message.reply_text("✅ Balasan terkirim & status diperbarui.")
 # =========================
 # LIST PENDING (FIX FINAL)
