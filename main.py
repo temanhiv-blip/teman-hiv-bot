@@ -69,10 +69,11 @@ except Exception as e:
 # =========================
 def menu_utama_keyboard():
     keyboard = [
+        [InlineKeyboardButton("ℹ️ Panduan Layanan", callback_data="panduan")],
         [InlineKeyboardButton("📋 Tatakunan Umum", callback_data="tatakunan_umum")],
         [InlineKeyboardButton("📋 Cek Risiko HIV", callback_data="cek_risiko")],
         [InlineKeyboardButton("📨 Kirim Tatakunan", callback_data="kirim_tatakunan")],
-        [InlineKeyboardButton("💬 Chat dengan Admin", callback_data="chat_admin")],
+        [InlineKeyboardButton("💬 Chat dengan Admin", callback_data="chat_admin_info")],
         [InlineKeyboardButton("📚 Media Edukasi", callback_data="media_edukasi")]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -148,7 +149,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     context.user_data["mode"] = "input_alias"
     await update.message.reply_text(
-        "Salamat Datang di *TemanHIV* 👋\nSilakan tulis nama pian (Samaran):",
+        "👋 *Salamat Datang di TemanHIV*\n"
+        "_Layanan Konsultasi HIV oleh KPAD Kabupaten_\n\n"
+        "TemanHIV membantu pian memperoleh informasi HIV secara aman, rahasia, dan terpercaya.\n\n"
+        "Pian dapat menggunakan nama samaran.\n\n"
+        "Silakan tulis nama samaran pian untuk memulai:",
         parse_mode=ParseMode.MARKDOWN
     )
 
@@ -186,48 +191,131 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.message.reply_text("Usia harus angka.")
 
     elif mode == "kirim_tatakunan":
-        wita = timezone(timedelta(hours=8))
-        waktu = datetime.now(wita).strftime("%Y-%m-%d %H:%M:%S")
-        kode = f"K{int(datetime.now().timestamp())}"
 
         alias = context.user_data.get("alias")
         usia = context.user_data.get("usia")
         alamat = context.user_data.get("alamat")
-
+        user_id = str(update.effective_user.id)
+    
+        # 🔒 VALIDASI SESSION
+        if not alias or not usia or not alamat:
+            context.user_data.clear()
+            context.user_data["mode"] = "input_alias"
+    
+            await update.message.reply_text(
+                "⚠️ Sesi pian telah berakhir atau data belum lengkap.\n\n"
+                "Silakan isi kembali nama samaran pian:"
+            )
+            return
+    
+        wita = timezone(timedelta(hours=8))
+        now_dt = datetime.now(wita)
+        waktu = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+    
+        # =========================================
+        # 🔍 CEK APAKAH ADA TIKET PENDING
+        # =========================================
+        existing_ticket = None
+        existing_row_number = None
+    
+        if sheet_main:
+            rows = sheet_main.get_all_values()
+            for idx, row in enumerate(rows[1:], start=2):  # skip header
+                if len(row) > 10:
+                    if row[10] == user_id and row[8] == "Pending":
+                        existing_ticket = row
+                        existing_row_number = idx
+                        break
+    
+        # =========================================
+        # 📝 JIKA ADA TIKET PENDING → APPEND
+        # =========================================
+        if existing_ticket:
+    
+            kode = existing_ticket[5]
+            isi_lama = existing_ticket[3]
+    
+            tambahan = f"+ ({waktu}) {text}"
+            isi_baru = f"{isi_lama}\n\n{tambahan}"
+    
+            # Update kolom D (Pertanyaan)
+            sheet_main.update(
+                range_name=f"D{existing_row_number}",
+                values=[[isi_baru]]
+            )
+    
+            # Notifikasi ke admin
+            await context.bot.send_message(
+                chat_id=ADMIN_GROUP_ID,
+                text=(
+                    f"📝 *Tambahan Tatakunan*\n"
+                    f"🆔 `{kode}`\n"
+                    f"👤 {alias}\n\n"
+                    f"{tambahan}"
+                ),
+                parse_mode=ParseMode.MARKDOWN
+            )
+    
+            await update.message.reply_text(
+                f"📝 Tambahan berhasil dikirim ke tiket 🆔 {kode}.\n"
+                "Admin akan membalas setelah tiket diproses."
+            )
+    
+            context.user_data["mode"] = None
+            return
+    
+        # =========================================
+        # 📨 JIKA TIDAK ADA → BUAT TIKET BARU
+        # =========================================
+    
+        kode = f"K{int(datetime.now().timestamp())}"
+    
         text_admin = (
             f"📨 *Tatakunan Baru*\n"
             f"👤 {alias} ({usia} thn)\n"
             f"📍 {alamat}\n"
             f"🆔 `{kode}`\n\n{text}"
         )
-
-        btn = [[InlineKeyboardButton("💬 Balas", callback_data=f"balas_{update.effective_user.id}_{kode}")]]
-
+    
+        btn = [[
+            InlineKeyboardButton(
+                "💬 Balas",
+                callback_data=f"balas_{user_id}_{kode}"
+            )
+        ]]
+    
         await context.bot.send_message(
             chat_id=ADMIN_GROUP_ID,
             text=text_admin,
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup(btn)
         )
-
+    
         if sheet_main:
             sheet_main.append_row([
-                waktu,                 # A
-                alias,                 # B
-                usia,                  # C
-                text,                  # D
-                "",                    # E Balasan
-                kode,                  # F
-                "",                    # G Admin
-                alamat,                # H
-                "Pending",             # I Status
-                "",                    # J Locked_by (HARUS KOSONG)
-                update.effective_user.id  # K User_ID
+                waktu,
+                alias,
+                usia,
+                text,
+                "",
+                kode,
+                "",
+                alamat,
+                "Pending",
+                "",
+                user_id
             ])
-
-        await update.message.reply_text(f"✅ Terkirim. Kode tiket pian: {kode}")
+    
+        await update.message.reply_text(
+            f"✅ Tatakunan terkirim.\n🆔 Kode tiket pian: {kode}"
+        )
+    
         context.user_data["mode"] = None
-        await update.message.reply_text("Pilih menu lainnya:", reply_markup=menu_utama_keyboard())
+    
+        await update.message.reply_text(
+            "Pilih menu lainnya:",
+            reply_markup=menu_utama_keyboard()
+        )
 
 # =========================
 # CALLBACK
@@ -236,8 +324,32 @@ async def tombol_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
+    
+    if data == "panduan":
+        teks = (
+            "ℹ️ *Panduan Layanan TemanHIV – KPAD Kabupaten*\n\n"
+            "TemanHIV adalah layanan konsultasi HIV yang dikelola oleh "
+            "KPAD Kabupaten untuk membantu masyarakat memperoleh informasi yang benar, aman, dan rahasia.\n\n"
+            "🔹 Pian dapat menggunakan nama samaran.\n"
+            "🔹 Data dan percakapan dijaga kerahasiaannya.\n"
+            "🔹 Sistem menggunakan tiket (1 tiket untuk 1 pertanyaan).\n"
+            "🔹 Balasan admin dikirim langsung ke akun Telegram pian.\n\n"
+            "⏳ Layanan dapat diakses 24 jam.\n"
+            "Balasan diprioritaskan pada jam kerja\n"
+            "Senin–Jumat, 08.00–16.00 WITA.\n\n"
+            "Jika dalam kondisi darurat medis, segera hubungi fasilitas kesehatan terdekat.\n\n"
+            "Terima kasih telah mempercayakan layanan ini."
+        )
 
-    if data == "tatakunan_umum":
+        await query.edit_message_text(
+            teks,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("⬅️ Kembali", callback_data="kembali_menu")]]
+            )
+        )
+        return
+    elif data == "tatakunan_umum":
         teks = await get_faq_text()
         await query.edit_message_text(
             teks,
@@ -263,11 +375,58 @@ async def tombol_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("Berapa usia pian saat ini?")
         
     elif data == "kirim_tatakunan":
-        context.user_data["mode"] = "kirim_tatakunan"
-        await query.message.reply_text(
-            "Silakan ketik pertanyaan pian untuk admin:"
-        )
+
+        alias = context.user_data.get("alias")
+        usia = context.user_data.get("usia")
+        alamat = context.user_data.get("alamat")
     
+        # 🔒 VALIDASI IDENTITAS
+        if not alias or not usia or not alamat:
+            context.user_data.clear()
+            context.user_data["mode"] = "input_alias"
+        
+            await query.edit_message_text(
+                "⚠️ Sesi pian telah berakhir.\n\n"
+                "Silakan isi kembali nama samaran pian:"
+            )
+            return
+    
+        context.user_data["mode"] = "kirim_tatakunan"
+    
+        await query.edit_message_text(
+            "📨 *Kirim Tatakunan*\n\n"
+            "Sistem ini menggunakan sistem tiket konsultasi.\n\n"
+            "🔹 1 tiket hanya untuk 1 pertanyaan.\n"
+            "🔹 Jika memiliki pertanyaan lain, silakan membuat tiket baru setelah pertanyaan sebelumnya dibalas.\n"
+            "🔹 Mohon tidak mengirim pesan berulang untuk pertanyaan yang sama.\n\n"
+            "Balasan akan dikirim secara pribadi ke akun Telegram pian.\n\n"
+            "Silakan tuliskan pertanyaan pian dengan jelas dan lengkap.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+    elif data == "chat_admin_info":
+
+        teks = (
+            "💬 *Chat Langsung dengan Admin*\n\n"
+            "Dengan memilih menu ini:\n\n"
+            "🔹 Pian akan terhubung langsung ke akun pribadi admin.\n"
+            "🔹 Identitas Telegram atau WhatsApp pian akan terlihat oleh admin.\n"
+            "🔹 Admin menjaga kerahasiaan sesuai etika layanan KPAD Kabupaten.\n\n"
+            "Jika ingin tetap menggunakan nama samaran, silakan gunakan menu *Kirim Tatakunan*.\n\n"
+            "Apakah pian ingin melanjutkan?"
+        )
+
+        keyboard = [
+            [InlineKeyboardButton("✅ Lanjutkan", callback_data="chat_admin")],
+            [InlineKeyboardButton("⬅️ Kembali", callback_data="kembali_menu")]
+        ]
+
+        await query.edit_message_text(
+            teks,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+        
     elif data == "chat_admin":
         alias = context.user_data.get("alias")
         usia = context.user_data.get("usia")
@@ -388,6 +547,22 @@ async def handle_balas_admin(update: Update, context: ContextTypes.DEFAULT_TYPE)
         values=[["Locked", admin_id]]
     )
 
+    # 🔔 NOTIFIKASI KE KLIEN BAHWA TIKET DI-LOCK
+    try:
+        user_id_sheet = str(row[10]).strip() if len(row) > 10 else ""
+        if user_id_sheet:
+            await context.bot.send_message(
+                chat_id=int(user_id_sheet),
+                text=(
+                    f"🔒 Tatakunan pian dengan kode 🆔 {kode} "
+                    "sedang diproses oleh admin.\n\n"
+                    "Pian tidak dapat menambahkan pesan lagi ke tiket ini.\n"
+                    "Mohon menunggu balasan."
+                )
+            )
+    except Exception as e:
+        logger.error(f"Gagal kirim notifikasi lock ke klien: {e}")
+
     await query.message.reply_text(
         f"🔒 Tiket dikunci oleh {admin_display}\n"
         f"Reply pesan ini untuk membalas kode {kode}."
@@ -437,7 +612,6 @@ async def admin_reply_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Tiket belum dikunci.")
         return
 
-    # 🔥 BUG FIX UTAMA
     if str(locked_by).strip() != str(admin_id).strip():
         await update.message.reply_text(
             f"❌ Tiket ini dikunci oleh ID {locked_by}, bukan {admin_id}"
