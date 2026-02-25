@@ -258,7 +258,9 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     
             await update.message.reply_text(
                 f"📝 Tambahan berhasil dikirim ke tiket 🆔 {kode}.\n"
-                "Admin akan membalas setelah tiket diproses."
+                "Admin akan membalas setelah tiket diproses.\n\n"
+                "Silakan pilih menu berikutnya:",
+                reply_markup=menu_utama_keyboard()
             )
     
             context.user_data["mode"] = None
@@ -622,8 +624,15 @@ async def admin_reply_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await context.bot.send_message(
             chat_id=int(user_id),
-            text=f"📬 *Balasan Admin*\n🆔 `{kode}`\n\n{balasan}",
-            parse_mode=ParseMode.MARKDOWN
+            text=(
+                f"📬 *Balasan Admin*\n"
+                f"🆔 `{kode}`\n\n"
+                f"{balasan}\n\n"
+                "_Terima kasih telah menggunakan layanan TemanHIV._\n\n"
+                "Silakan pilih menu berikutnya:"
+            ),
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=menu_utama_keyboard()
         )
     except Exception as e:
         await update.message.reply_text(f"❌ Gagal kirim: {e}")
